@@ -5,7 +5,7 @@ import {
   lineShipping,
   orderShipping,
   shipments,
-} from "./data.js?v=14";
+} from "./data.js?v=15";
 import {
   selectionKey,
   maxSelectable,
@@ -18,9 +18,10 @@ import {
   shipmentCheckState,
   summarize,
   perUnitShipping,
+  packageAttributableShipping,
   maxShippingUnitsSelectable,
   setShippingSelection,
-} from "./selection.js?v=14";
+} from "./selection.js?v=15";
 
 const state = {
   selections: {},
@@ -61,7 +62,7 @@ function renderShippingRow(pkg, alloc) {
   if (!charge) return "";
 
   const key = selectionKey(pkg.id, alloc.lineId);
-  const perUnit = perUnitShipping(charge);
+  const attributable = packageAttributableShipping(charge, alloc.qtyInPackage);
   const maxUnits = maxShippingUnitsSelectable({
     charge,
     qtyInPackage: alloc.qtyInPackage,
@@ -69,16 +70,11 @@ function renderShippingRow(pkg, alloc) {
     shippingSelections: state.shippingSelections,
   });
   const selectedUnits = state.shippingSelections[key] || 0;
-  const limitedByBalance = maxUnits < alloc.qtyInPackage && maxUnits > 0;
-  const exhausted = maxUnits === 0 && selectedUnits === 0;
-  const amount = selectedUnits * perUnit;
+  const selectedOn = selectedUnits > 0;
+  // B&B: one unit per package — checkbox is on/off for the full attributable charge
+  const canSelect = maxUnits >= alloc.qtyInPackage || selectedOn;
+  const exhausted = !canSelect;
   const reason = state.shippingReasons[key] || state.orderReason || "";
-  const unitWord = selectedUnits === 1 ? "unit" : "units";
-  const maxUnitWord = maxUnits === 1 ? "unit" : "units";
-
-  const options = Array.from({ length: maxUnits + 1 }, (_, i) => {
-    return `<option value="${i}" ${i === selectedUnits ? "selected" : ""}>${i}</option>`;
-  }).join("");
 
   let constraint = "";
   if (exhausted) {
@@ -87,15 +83,9 @@ function renderShippingRow(pkg, alloc) {
         No shipping remaining to refund
         ${shippingBalanceTip(charge)}
       </div>`;
-  } else if (limitedByBalance) {
-    constraint = `
-      <div class="qty-hint qty-hint-limit">
-        Only ${maxUnits} remaining to refund
-        ${shippingBalanceTip(charge)}
-      </div>`;
   }
 
-  const reasonCell = selectedUnits > 0
+  const reasonCell = selectedOn
     ? `<select class="select" data-action="ship-reason" data-pkg="${pkg.id}" data-line="${alloc.lineId}">
           ${reasons
             .map(
@@ -113,27 +103,29 @@ function renderShippingRow(pkg, alloc) {
         <div class="ship-cell">
           <div class="ship-indent" aria-hidden="true">↳</div>
           <div class="ship-body">
-            <div class="ship-name">${truckSvg} ${charge.name} · ${money(perUnit)}/unit</div>
+            <div class="ship-name">${truckSvg} ${charge.name} · ${money(attributable)}</div>
             ${constraint}
           </div>
         </div>
       </td>
       <td class="muted-cell">—</td>
       <td>
-        <div class="ship-qty-ctrl">
-          <span class="ship-qty-label">${exhausted ? "Refund shipping" : "Refund shipping for"}</span>
-          ${
-            exhausted
-              ? ""
-              : `<select class="select select-qty" data-action="ship-qty" data-pkg="${pkg.id}" data-line="${alloc.lineId}" aria-label="Refund ${charge.name} units for ${pkg.label}">
-                  ${options}
-                </select>
-                <span class="ship-qty-label">${selectedUnits === 0 ? maxUnitWord : unitWord}</span>`
-          }
-        </div>
+        <label class="ship-refund-ctrl ${exhausted ? "is-disabled" : ""}">
+          <input
+            class="checkbox"
+            type="checkbox"
+            data-action="ship-fee-toggle"
+            data-pkg="${pkg.id}"
+            data-line="${alloc.lineId}"
+            ${selectedOn ? "checked" : ""}
+            ${exhausted ? "disabled" : ""}
+            aria-label="Refund ${charge.name} (${money(attributable)}) for ${pkg.label}"
+          />
+          <span>Refund shipping</span>
+        </label>
       </td>
       <td>${reasonCell}</td>
-      <td class="ship-price">${selectedUnits > 0 ? money(amount) : "—"}</td>
+      <td class="ship-price">${selectedOn ? money(attributable) : "—"}</td>
       <td class="muted-cell">—</td>
     </tr>
   `;
@@ -614,6 +606,34 @@ function onChange(e) {
     return;
   }
 
+  if (action === "ship-fee-toggle") {
+    const packageId = t.getAttribute("data-pkg");
+    const lineId = t.getAttribute("data-line");
+    const charge = lineShipping[lineId];
+    const pkg = findPackage(packageId);
+    const alloc = pkg?.allocations.find((a) => a.lineId === lineId);
+    if (!charge || !pkg || !alloc) return;
+    if (t.checked) {
+      state.shippingSelections = setShippingSelection(
+        state.shippingSelections,
+        packageId,
+        charge,
+        alloc.qtyInPackage,
+        alloc.qtyInPackage
+      );
+    } else {
+      state.shippingSelections = setShippingSelection(
+        state.shippingSelections,
+        packageId,
+        charge,
+        alloc.qtyInPackage,
+        0
+      );
+      delete state.shippingReasons[selectionKey(packageId, lineId)];
+    }
+    render();
+  }
+
   if (action === "qty") {
     const packageId = t.getAttribute("data-pkg");
     const lineId = t.getAttribute("data-line");
@@ -627,25 +647,6 @@ function onChange(e) {
       lines[lineId],
       alloc.qtyInPackage
     );
-    render();
-  }
-
-  if (action === "ship-qty") {
-    const packageId = t.getAttribute("data-pkg");
-    const lineId = t.getAttribute("data-line");
-    const charge = lineShipping[lineId];
-    const pkg = findPackage(packageId);
-    const alloc = pkg?.allocations.find((a) => a.lineId === lineId);
-    if (!charge || !pkg || !alloc) return;
-    const units = Number(t.value);
-    state.shippingSelections = setShippingSelection(
-      state.shippingSelections,
-      packageId,
-      charge,
-      alloc.qtyInPackage,
-      units
-    );
-    if (units === 0) delete state.shippingReasons[selectionKey(packageId, lineId)];
     render();
   }
 

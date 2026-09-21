@@ -605,6 +605,21 @@ label.field {
   white-space: nowrap;
 }
 
+.ship-refund-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.ship-refund-ctrl.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .ship-price {
   font-weight: 600;
   color: var(--teal);

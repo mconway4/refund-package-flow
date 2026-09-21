@@ -1,5 +1,5 @@
 /**
- * Sample order: trampoline Big & Bulky (PRD line-level shipping) + Crayola companion.
+ * Sample order: trampoline Big & Bulky (one unit per B&B package) + Crayola companion.
  * Line ID owns refund balance. Package/shipment owns fulfilment context only.
  */
 
@@ -53,6 +53,7 @@ export const lines = {
  * Line-level shipping charges (e.g. Big & Bulky).
  * Balance is authoritative at line level — never inferred per package.
  * Per-unit = originalCharge ÷ originalChargeableQty (never recalculated after refunds).
+ * B&B ships one unit per package, so each package shows one attributable charge.
  */
 export const lineShipping = {
   "123": {
@@ -78,11 +79,8 @@ export const orderShipping = {
 };
 
 /**
- * Fulfilment: Shipment → Package → line allocations.
- * qtyInPackage is physical only — never treated as refund balance.
- *
- * Trampoline ×3 across three packages; $15 of B&B already refunded at line level
- * with no package attribution.
+ * Fulfilment: each Big & Bulky unit in its own package.
+ * $15 of B&B already refunded at line level with no package attribution → $30 remaining.
  */
 export const shipments = [
   {
@@ -103,9 +101,16 @@ export const shipments = [
       {
         id: "pkg-2",
         label: "Package 2",
-        tracking: "AU123456",
+        tracking: "AU123457",
         status: "Delivered",
-        allocations: [{ lineId: "123", qtyInPackage: 2 }],
+        allocations: [{ lineId: "123", qtyInPackage: 1 }],
+      },
+      {
+        id: "pkg-3",
+        label: "Package 3",
+        tracking: "AU123458",
+        status: "Delivered",
+        allocations: [{ lineId: "123", qtyInPackage: 1 }],
       },
     ],
   },
