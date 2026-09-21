@@ -5,7 +5,7 @@ import {
   lineShipping,
   orderShipping,
   shipments,
-} from "./data.js?v=17";
+} from "./data.js?v=18";
 import {
   selectionKey,
   maxSelectable,
@@ -21,7 +21,7 @@ import {
   packageAttributableShipping,
   maxShippingAmountSelectable,
   setShippingSelection,
-} from "./selection.js?v=17";
+} from "./selection.js?v=18";
 
 const state = {
   selections: {},

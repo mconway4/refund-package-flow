@@ -1,6 +1,8 @@
 /**
- * Sample order: trampoline Big & Bulky (one unit per B&B package) + Crayola companion.
- * Line ID owns refund balance. Package/shipment owns fulfilment context only.
+ * Combined demo order:
+ * - Trampoline + Big & Bulky shipping (partial fee refunds, shared line balance)
+ * - UNO across packages (merchandise qty line-level limiter)
+ * Spread across Sydney DC, Melbourne DC, and Burwood store.
  */
 
 export const orderMeta = {
@@ -34,6 +36,19 @@ export const lines = {
     availableToRefund: 3,
     status: "Shipped",
   },
+  "789": {
+    id: "789",
+    name: "UNO Card Game",
+    sku: "111014052",
+    unitPrice: 7.0,
+    ordered: 5,
+    delivered: 5,
+    inProgress: 0,
+    cancelled: 0,
+    refunded: 1,
+    availableToRefund: 4,
+    status: "Partially Returned",
+  },
   "456": {
     id: "456",
     name: "Crayola Crayons 24pk",
@@ -50,10 +65,8 @@ export const lines = {
 };
 
 /**
- * Line-level shipping charges (e.g. Big & Bulky).
- * Balance is authoritative at line level — never inferred per package.
- * Per-unit = originalCharge ÷ originalChargeableQty (never recalculated after refunds).
- * B&B ships one unit per package, so each package shows one attributable charge.
+ * Line-level shipping — trampoline Big & Bulky only.
+ * $15 previously refunded at line level (no package attribution) → $30 remaining.
  */
 export const lineShipping = {
   "123": {
@@ -79,8 +92,9 @@ export const orderShipping = {
 };
 
 /**
- * Fulfilment: each Big & Bulky unit in its own package.
- * $15 of B&B already refunded at line level with no package attribution → $30 remaining.
+ * Fulfilment across three origins.
+ * B&B: one trampoline per package ($15 attributable each).
+ * UNO: 1 + 2 + 2 = 5 physical units; only 4 remaining refundable at line level.
  */
 export const shipments = [
   {
@@ -101,16 +115,51 @@ export const shipments = [
       {
         id: "pkg-2",
         label: "Package 2",
-        tracking: "AU123457",
+        tracking: "AU123456",
+        status: "Delivered",
+        allocations: [{ lineId: "789", qtyInPackage: 1 }],
+      },
+    ],
+  },
+  {
+    id: "ship-mel",
+    label: "Shipment 2 — Melbourne DC",
+    status: "Delivered",
+    packages: [
+      {
+        id: "pkg-3",
+        label: "Package 3",
+        tracking: "AU987654",
         status: "Delivered",
         allocations: [{ lineId: "123", qtyInPackage: 1 }],
       },
       {
-        id: "pkg-3",
-        label: "Package 3",
-        tracking: "AU123458",
+        id: "pkg-4",
+        label: "Package 4",
+        tracking: "AU987654",
+        status: "Delivered",
+        allocations: [{ lineId: "789", qtyInPackage: 2 }],
+      },
+    ],
+  },
+  {
+    id: "ship-burwood",
+    label: "Shipment 3 — Burwood store",
+    status: "Delivered",
+    packages: [
+      {
+        id: "pkg-5",
+        label: "Package 5",
+        tracking: "AU555001",
         status: "Delivered",
         allocations: [{ lineId: "123", qtyInPackage: 1 }],
+      },
+      {
+        id: "pkg-6",
+        label: "Package 6",
+        tracking: "AU555002",
+        status: "Delivered",
+        allocations: [{ lineId: "789", qtyInPackage: 2 }],
       },
     ],
   },
