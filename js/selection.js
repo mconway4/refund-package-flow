@@ -1,7 +1,7 @@
 /**
  * Merchandise selection keyed by `${packageId}::${lineId}` → selected qty.
- * Line-level shipping selection keyed by `${packageId}::${lineId}` → shipping units.
- * Amount = units × original per-unit shipping. Bulk select = merchandise only.
+ * Line-level shipping selection keyed by `${packageId}::${lineId}` → refund amount.
+ * Amount ≤ MIN(package-attributable, remaining line shipping). Bulk select = merchandise only.
  */
 
 export function selectionKey(packageId, lineId) {
@@ -45,11 +45,11 @@ export function totalSelectedForLine(selections, lineId) {
   return total;
 }
 
-/** Total selected shipping units for a line across packages */
-export function totalShippingUnitsSelectedForLine(shippingSelections, lineId) {
+/** Total selected shipping amount for a line across packages */
+export function totalShippingAmountSelectedForLine(shippingSelections, lineId) {
   let total = 0;
-  for (const [key, units] of Object.entries(shippingSelections)) {
-    if (parseKey(key).lineId === lineId) total += units;
+  for (const [key, amount] of Object.entries(shippingSelections)) {
+    if (parseKey(key).lineId === lineId) total = roundMoney(total + amount);
   }
   return total;
 }
@@ -71,10 +71,10 @@ export function maxSelectable({
 }
 
 /**
- * Max shipping units selectable for this package occurrence.
- * MIN(package qty, remaining line shipping units).
+ * Max shipping amount selectable for this package occurrence.
+ * MIN(package-attributable, remaining line shipping balance).
  */
-export function maxShippingUnitsSelectable({
+export function maxShippingAmountSelectable({
   charge,
   qtyInPackage,
   packageId,
@@ -83,9 +83,21 @@ export function maxShippingUnitsSelectable({
   if (!charge) return 0;
   const key = selectionKey(packageId, charge.lineId);
   const current = shippingSelections[key] || 0;
-  const others = totalShippingUnitsSelectedForLine(shippingSelections, charge.lineId) - current;
-  const remainingUnits = Math.max(0, remainingShippingUnits(charge) - others);
-  return Math.min(qtyInPackage, remainingUnits);
+  const others = roundMoney(
+    totalShippingAmountSelectedForLine(shippingSelections, charge.lineId) - current
+  );
+  const remainingOnLine = Math.max(0, roundMoney(charge.availableToRefund - others));
+  const attributable = packageAttributableShipping(charge, qtyInPackage);
+  return Math.min(attributable, remainingOnLine);
+}
+
+/** @deprecated — units helper kept for callers that still need unit counts */
+export function maxShippingUnitsSelectable(args) {
+  const perUnit = perUnitShipping(args.charge);
+  if (perUnit <= 0) return 0;
+  return Math.floor(
+    roundMoney(maxShippingAmountSelectable(args) / perUnit) + Number.EPSILON
+  );
 }
 
 export function setSelection(selections, packageId, lineId, qty, line, qtyInPackage) {
@@ -100,22 +112,27 @@ export function setSelection(selections, packageId, lineId, qty, line, qtyInPack
   return next;
 }
 
+/**
+ * Set shipping refund amount for a package occurrence.
+ * Amount must be > 0 and ≤ max; 0 clears the selection.
+ */
 export function setShippingSelection(
   shippingSelections,
   packageId,
   charge,
   qtyInPackage,
-  units
+  amount
 ) {
   const next = { ...shippingSelections };
   const key = selectionKey(packageId, charge.lineId);
-  const max = maxShippingUnitsSelectable({
+  const max = maxShippingAmountSelectable({
     charge,
     qtyInPackage,
     packageId,
     shippingSelections,
   });
-  const capped = Math.max(0, Math.min(Math.floor(Number(units) || 0), max));
+  const raw = roundMoney(Number(amount) || 0);
+  const capped = Math.max(0, Math.min(raw, max));
   if (capped === 0) delete next[key];
   else next[key] = capped;
   return next;
@@ -232,7 +249,7 @@ export function shipmentHasAnySelection(selections, shipment) {
 
 /**
  * Refund totals — merchandise and shipping kept separate.
- * shippingSelections values are units; amounts = units × per-unit.
+ * shippingSelections values are refund amounts (money).
  */
 export function summarize(selections, lines, shippingSelections = {}, lineShipping = {}, orderShipping = null, orderShippingSelected = false) {
   let merchandiseCount = 0;
@@ -251,17 +268,16 @@ export function summarize(selections, lines, shippingSelections = {}, lineShippi
 
   let lineShippingValue = 0;
   const shippingByLine = {};
-  for (const [key, units] of Object.entries(shippingSelections)) {
-    if (!units) continue;
+  for (const [key, amount] of Object.entries(shippingSelections)) {
+    if (!amount) continue;
     const { lineId, packageId } = parseKey(key);
     const charge = lineShipping[lineId];
     if (!charge) continue;
-    const amount = roundMoney(units * perUnitShipping(charge));
-    lineShippingValue = roundMoney(lineShippingValue + amount);
-    if (!shippingByLine[lineId]) shippingByLine[lineId] = { units: 0, amount: 0, packages: [] };
-    shippingByLine[lineId].units += units;
-    shippingByLine[lineId].amount = roundMoney(shippingByLine[lineId].amount + amount);
-    shippingByLine[lineId].packages.push({ packageId, units, amount });
+    const refundAmount = roundMoney(amount);
+    lineShippingValue = roundMoney(lineShippingValue + refundAmount);
+    if (!shippingByLine[lineId]) shippingByLine[lineId] = { amount: 0, packages: [] };
+    shippingByLine[lineId].amount = roundMoney(shippingByLine[lineId].amount + refundAmount);
+    shippingByLine[lineId].packages.push({ packageId, amount: refundAmount });
   }
 
   const orderShippingValue =

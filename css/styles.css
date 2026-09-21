@@ -620,6 +620,22 @@ label.field {
   cursor: not-allowed;
 }
 
+.ship-amount-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ship-amount-prefix {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.ship-amount-input {
+  width: 88px;
+  padding: 6px 8px;
+}
+
 .ship-price {
   font-weight: 600;
   color: var(--teal);
