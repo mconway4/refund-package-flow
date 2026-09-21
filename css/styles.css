@@ -560,6 +560,10 @@ label.field {
   vertical-align: middle;
 }
 
+.ship-row td.ship-select {
+  padding-left: 28px;
+}
+
 .ship-row .ship-cell {
   display: flex;
   align-items: flex-start;

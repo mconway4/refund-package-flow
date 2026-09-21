@@ -5,7 +5,7 @@ import {
   lineShipping,
   orderShipping,
   shipments,
-} from "./data.js?v=19";
+} from "./data.js?v=20";
 import {
   selectionKey,
   maxSelectable,
@@ -21,7 +21,7 @@ import {
   packageAttributableShipping,
   maxShippingAmountSelectable,
   setShippingSelection,
-} from "./selection.js?v=19";
+} from "./selection.js?v=20";
 
 const state = {
   selections: {},
@@ -123,7 +123,7 @@ function renderShippingRow(pkg, alloc) {
 
   return `
     <tr class="ship-row ${exhausted ? "exhausted" : ""}" data-pkg="${pkg.id}" data-line="${alloc.lineId}" data-ship-row="1">
-      <td>
+      <td class="ship-select">
         <input
           class="checkbox"
           type="checkbox"
