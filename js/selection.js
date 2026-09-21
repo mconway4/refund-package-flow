@@ -1,6 +1,7 @@
 /**
- * Selection keyed by `${packageId}::${lineId}` → selected qty.
- * Enforces package qty max + shared line-level availableToRefund.
+ * Merchandise selection keyed by `${packageId}::${lineId}` → selected qty.
+ * Line-level shipping selection keyed by `${packageId}::${lineId}` → selected amount.
+ * Enforces package max + shared line-level balances. Bulk select = merchandise only.
  */
 
 export function selectionKey(packageId, lineId) {
@@ -12,7 +13,22 @@ export function parseKey(key) {
   return { packageId, lineId };
 }
 
-/** Total selected for a line across all packages */
+export function roundMoney(n) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/** Original per-unit shipping — never recalculated after refunds */
+export function perUnitShipping(charge) {
+  if (!charge || !charge.originalChargeableQty) return 0;
+  return roundMoney(charge.originalCharge / charge.originalChargeableQty);
+}
+
+/** Package-attributable shipping from original per-unit × qty in package */
+export function packageAttributableShipping(charge, qtyInPackage) {
+  return roundMoney(perUnitShipping(charge) * qtyInPackage);
+}
+
+/** Total selected merchandise qty for a line across all packages */
 export function totalSelectedForLine(selections, lineId) {
   let total = 0;
   for (const [key, qty] of Object.entries(selections)) {
@@ -21,9 +37,17 @@ export function totalSelectedForLine(selections, lineId) {
   return total;
 }
 
+/** Total selected line-level shipping amount for a line across packages */
+export function totalShippingSelectedForLine(shippingSelections, lineId) {
+  let total = 0;
+  for (const [key, amount] of Object.entries(shippingSelections)) {
+    if (parseKey(key).lineId === lineId) total += amount;
+  }
+  return total;
+}
+
 /**
- * Max qty that can still be selected for this allocation,
- * given current selections (excluding this cell's current value when computing remaining).
+ * Max merchandise qty selectable for this allocation.
  */
 export function maxSelectable({
   line,
@@ -38,6 +62,25 @@ export function maxSelectable({
   return Math.min(qtyInPackage, remainingOnLine);
 }
 
+/**
+ * Max shipping amount selectable for this package occurrence.
+ * MIN(package-attributable, remaining line shipping balance).
+ */
+export function maxShippingSelectable({
+  charge,
+  qtyInPackage,
+  packageId,
+  shippingSelections,
+}) {
+  if (!charge) return 0;
+  const key = selectionKey(packageId, charge.lineId);
+  const current = shippingSelections[key] || 0;
+  const others = totalShippingSelectedForLine(shippingSelections, charge.lineId) - current;
+  const remainingOnLine = Math.max(0, roundMoney(charge.availableToRefund - others));
+  const attributable = packageAttributableShipping(charge, qtyInPackage);
+  return Math.min(attributable, remainingOnLine);
+}
+
 export function setSelection(selections, packageId, lineId, qty, line, qtyInPackage) {
   const next = { ...selections };
   const key = selectionKey(packageId, lineId);
@@ -50,13 +93,32 @@ export function setSelection(selections, packageId, lineId, qty, line, qtyInPack
   return next;
 }
 
-/** Select package: fill each allocation to max eligible under line balances */
+export function setShippingSelection(
+  shippingSelections,
+  packageId,
+  charge,
+  qtyInPackage,
+  amount
+) {
+  const next = { ...shippingSelections };
+  const key = selectionKey(packageId, charge.lineId);
+  const max = maxShippingSelectable({
+    charge,
+    qtyInPackage,
+    packageId,
+    shippingSelections,
+  });
+  const capped = Math.max(0, Math.min(roundMoney(amount), max));
+  if (capped === 0) delete next[key];
+  else next[key] = capped;
+  return next;
+}
+
+/** Select package: fill merchandise only (shipping requires explicit selection) */
 export function selectPackage(selections, pkg, lines) {
   let next = { ...selections };
-  // Clear package first so we redistribute fairly within package
   for (const alloc of pkg.allocations) {
-    const key = selectionKey(pkg.id, alloc.lineId);
-    delete next[key];
+    delete next[selectionKey(pkg.id, alloc.lineId)];
   }
   for (const alloc of pkg.allocations) {
     const line = lines[alloc.lineId];
@@ -80,10 +142,7 @@ export function clearPackage(selections, pkg) {
 }
 
 /**
- * Package checkbox state against currently refundable qty (not physical units):
- * - none: nothing selected
- * - partial: some eligible qty selected, but not every allocation at its max
- * - all: every allocation is at its maxSelectable (max may be < qty in package)
+ * Package checkbox state — merchandise only.
  */
 export function packageCheckState(selections, pkg, lines) {
   let anySelected = false;
@@ -117,7 +176,6 @@ export function packageHasAnySelection(selections, pkg) {
   );
 }
 
-/** Select shipment: fill each package to max eligible under line balances (in order) */
 export function selectShipment(selections, shipment, lines) {
   let next = { ...selections };
   for (const pkg of shipment.packages) {
@@ -165,18 +223,51 @@ export function shipmentHasAnySelection(selections, shipment) {
   return shipment.packages.some((pkg) => packageHasAnySelection(selections, pkg));
 }
 
-export function summarize(selections, lines) {
-  let count = 0;
-  let value = 0;
+/**
+ * Refund totals — merchandise and shipping kept separate.
+ */
+export function summarize(selections, lines, shippingSelections = {}, lineShipping = {}, orderShipping = null, orderShippingSelected = false) {
+  let merchandiseCount = 0;
+  let merchandiseValue = 0;
   const byLine = {};
+
   for (const [key, qty] of Object.entries(selections)) {
     if (!qty) continue;
     const { lineId, packageId } = parseKey(key);
-    count += qty;
-    value += qty * lines[lineId].unitPrice;
+    merchandiseCount += qty;
+    merchandiseValue = roundMoney(merchandiseValue + qty * lines[lineId].unitPrice);
     if (!byLine[lineId]) byLine[lineId] = { qty: 0, packages: [] };
     byLine[lineId].qty += qty;
     byLine[lineId].packages.push({ packageId, qty });
   }
-  return { count, value, byLine };
+
+  let lineShippingValue = 0;
+  const shippingByLine = {};
+  for (const [key, amount] of Object.entries(shippingSelections)) {
+    if (!amount) continue;
+    const { lineId, packageId } = parseKey(key);
+    lineShippingValue = roundMoney(lineShippingValue + amount);
+    if (!shippingByLine[lineId]) shippingByLine[lineId] = { amount: 0, packages: [] };
+    shippingByLine[lineId].amount = roundMoney(shippingByLine[lineId].amount + amount);
+    shippingByLine[lineId].packages.push({ packageId, amount });
+  }
+
+  const orderShippingValue =
+    orderShippingSelected && orderShipping ? orderShipping.availableToRefund : 0;
+
+  const value = roundMoney(merchandiseValue + lineShippingValue + orderShippingValue);
+  const count = merchandiseCount + (lineShippingValue > 0 ? 1 : 0) + (orderShippingValue > 0 ? 1 : 0);
+
+  return {
+    count: merchandiseCount,
+    merchandiseCount,
+    merchandiseValue,
+    lineShippingValue,
+    orderShippingValue,
+    value,
+    byLine,
+    shippingByLine,
+    hasSelection:
+      merchandiseCount > 0 || lineShippingValue > 0 || orderShippingValue > 0,
+  };
 }

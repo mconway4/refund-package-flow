@@ -1,5 +1,5 @@
 /**
- * Sample order matching the PRD UNO scenario.
+ * Sample order: trampoline Big & Bulky (PRD line-level shipping) + Crayola companion.
  * Line ID owns refund balance. Package/shipment owns fulfilment context only.
  */
 
@@ -15,23 +15,24 @@ export const reasons = [
   "Missing / not received",
   "Incorrect item",
   "Delivery delay",
+  "Delivery issue",
   "Customer request",
 ];
 
-/** Authoritative line-level refund ledger */
+/** Authoritative line-level merchandise refund ledger */
 export const lines = {
   "123": {
     id: "123",
-    name: "UNO Card Game",
+    name: "14ft Trampoline with Enclosure",
     sku: "111014050",
-    unitPrice: 7.0,
-    ordered: 5,
-    delivered: 5,
+    unitPrice: 260.0,
+    ordered: 3,
+    delivered: 3,
     inProgress: 0,
     cancelled: 0,
-    refunded: 1,
-    availableToRefund: 4,
-    status: "Partially Returned",
+    refunded: 0,
+    availableToRefund: 3,
+    status: "Shipped",
   },
   "456": {
     id: "456",
@@ -49,8 +50,39 @@ export const lines = {
 };
 
 /**
- * Fulfilment structure: Shipment → Package → line allocations.
+ * Line-level shipping charges (e.g. Big & Bulky).
+ * Balance is authoritative at line level — never inferred per package.
+ * Per-unit = originalCharge ÷ originalChargeableQty (never recalculated after refunds).
+ */
+export const lineShipping = {
+  "123": {
+    id: "bnb-123",
+    lineId: "123",
+    name: "Big & Bulky shipping",
+    originalCharge: 45.0,
+    originalChargeableQty: 3,
+    previouslyRefunded: 15.0,
+    availableToRefund: 30.0,
+  },
+};
+
+/**
+ * Order-level shipping (whole order) — independent of line-level B&B.
+ */
+export const orderShipping = {
+  id: "order-ship-1",
+  name: "Standard shipping",
+  originalCharge: 12.0,
+  previouslyRefunded: 0,
+  availableToRefund: 12.0,
+};
+
+/**
+ * Fulfilment: Shipment → Package → line allocations.
  * qtyInPackage is physical only — never treated as refund balance.
+ *
+ * Trampoline ×3 across three packages; $15 of B&B already refunded at line level
+ * with no package attribution.
  */
 export const shipments = [
   {
@@ -71,21 +103,7 @@ export const shipments = [
       {
         id: "pkg-2",
         label: "Package 2",
-        tracking: "AU123456", // same tracking, separate package record
-        status: "Delivered",
-        allocations: [{ lineId: "123", qtyInPackage: 2 }],
-      },
-    ],
-  },
-  {
-    id: "ship-mel",
-    label: "Shipment 2 — Melbourne DC",
-    status: "Delivered",
-    packages: [
-      {
-        id: "pkg-3",
-        label: "Package 3",
-        tracking: "AU987654",
+        tracking: "AU123456",
         status: "Delivered",
         allocations: [{ lineId: "123", qtyInPackage: 2 }],
       },
