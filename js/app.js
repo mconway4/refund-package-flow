@@ -1,4 +1,11 @@
-import { orderMeta, reasons, lines, shipments } from "./data.js?v=12";
+import {
+  orderMeta,
+  reasons,
+  lines,
+  lineShipping,
+  orderShipping,
+  shipments,
+} from "./data.js?v=19";
 import {
   selectionKey,
   maxSelectable,
@@ -10,11 +17,19 @@ import {
   clearShipment,
   shipmentCheckState,
   summarize,
-} from "./selection.js?v=12";
+  perUnitShipping,
+  packageAttributableShipping,
+  maxShippingAmountSelectable,
+  setShippingSelection,
+} from "./selection.js?v=19";
 
 const state = {
   selections: {},
+  shippingSelections: {},
   itemReasons: {},
+  shippingReasons: {},
+  orderShippingSelected: false,
+  orderShippingReason: "",
   orderReason: "",
   source: "Guide",
   notes: "",
@@ -24,10 +39,118 @@ const state = {
 const money = (n) =>
   n.toLocaleString("en-AU", { style: "currency", currency: "AUD" });
 
-function el(html) {
-  const t = document.createElement("template");
-  t.innerHTML = html.trim();
-  return t.content.firstElementChild;
+const truckSvg = `<svg class="ship-icon" width="16" height="16" viewBox="0 0 24 16" fill="none" aria-hidden="true"><path d="M1 4h14v9H1V4zm14 2h4l3 3v4h-7V6zM5 15.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm12 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" stroke="currentColor" stroke-width="1.5"/></svg>`;
+
+function shippingBalanceTip(charge) {
+  const perUnit = perUnitShipping(charge);
+  return `
+    <span class="info-tip" tabindex="0" role="img" aria-label="Shipping balance details">
+      <span class="info-i">ⓘ</span>
+      <span class="info-tip-panel" role="tooltip">
+        <strong>${charge.name}</strong>
+        <span>Originally charged: ${money(charge.originalCharge)}<br/>
+        Previously refunded: ${money(charge.previouslyRefunded)}<br/>
+        Remaining to refund: ${money(charge.availableToRefund)}</span>
+        <span style="display:block;margin-top:6px">${money(perUnit)} shipping was charged per unit. Previous refunds aren't linked to a specific package.</span>
+      </span>
+    </span>
+  `;
+}
+
+function renderShippingRow(pkg, alloc) {
+  const charge = lineShipping[alloc.lineId];
+  if (!charge) return "";
+
+  const key = selectionKey(pkg.id, alloc.lineId);
+  const attributable = packageAttributableShipping(charge, alloc.qtyInPackage);
+  const maxAmount = maxShippingAmountSelectable({
+    charge,
+    qtyInPackage: alloc.qtyInPackage,
+    packageId: pkg.id,
+    shippingSelections: state.shippingSelections,
+  });
+  const selectedAmount = state.shippingSelections[key] || 0;
+  const selectedOn = selectedAmount > 0;
+  const canSelect = maxAmount > 0 || selectedOn;
+  const exhausted = !canSelect;
+  const limitedByBalance = maxAmount > 0 && maxAmount < attributable;
+  const reason = state.shippingReasons[key] || state.orderReason || "";
+
+  let constraint = "";
+  if (exhausted) {
+    constraint = `
+      <div class="qty-hint qty-hint-limit">
+        No shipping remaining to refund
+        ${shippingBalanceTip(charge)}
+      </div>`;
+  } else if (limitedByBalance) {
+    constraint = `
+      <div class="qty-hint qty-hint-limit">
+        ${money(maxAmount)} remaining to refund
+        ${shippingBalanceTip(charge)}
+      </div>`;
+  }
+
+  const reasonCell = selectedOn
+    ? `<select class="select" data-action="ship-reason" data-pkg="${pkg.id}" data-line="${alloc.lineId}">
+          ${reasons
+            .map(
+              (r, i) =>
+                `<option value="${i === 0 ? "" : r}" ${reason === r ? "selected" : ""}>${r}</option>`
+            )
+            .join("")}
+        </select>`
+    : `<span class="muted-cell">—</span>`;
+
+  const amountCell = selectedOn
+    ? `<div class="ship-amount-cell">
+        <span class="ship-amount-prefix" aria-hidden="true">$</span>
+        <input
+          class="input ship-amount-input"
+          type="number"
+          inputmode="decimal"
+          min="0.01"
+          max="${maxAmount}"
+          step="0.01"
+          value="${selectedAmount.toFixed(2)}"
+          data-action="ship-amount"
+          data-pkg="${pkg.id}"
+          data-line="${alloc.lineId}"
+          aria-label="Refund amount for ${charge.name} in ${pkg.label} (max ${money(maxAmount)})"
+        />
+      </div>`
+    : `<span>${money(attributable)}</span>`;
+
+  return `
+    <tr class="ship-row ${exhausted ? "exhausted" : ""}" data-pkg="${pkg.id}" data-line="${alloc.lineId}" data-ship-row="1">
+      <td>
+        <input
+          class="checkbox"
+          type="checkbox"
+          data-action="ship-fee-toggle"
+          data-pkg="${pkg.id}"
+          data-line="${alloc.lineId}"
+          ${selectedOn ? "checked" : ""}
+          ${exhausted ? "disabled" : ""}
+          aria-label="Include ${charge.name} (${money(attributable)}) from ${pkg.label}"
+        />
+      </td>
+      <td>
+        <div class="ship-cell">
+          <div class="ship-indent" aria-hidden="true">↳</div>
+          <div class="ship-body">
+            <div class="ship-name">${truckSvg} ${charge.name}</div>
+            ${constraint}
+          </div>
+        </div>
+      </td>
+      <td class="muted-cell">—</td>
+      <td class="muted-cell">—</td>
+      <td>${reasonCell}</td>
+      <td>${amountCell}</td>
+      <td class="ship-price">${money(selectedOn ? selectedAmount : 0)}</td>
+    </tr>
+  `;
 }
 
 function renderAllocationRow(pkg, alloc) {
@@ -42,10 +165,8 @@ function renderAllocationRow(pkg, alloc) {
   });
   const limitedByBalance = max < alloc.qtyInPackage;
   const cannotSelect = max === 0;
-  const reason =
-    state.itemReasons[key] || state.orderReason || "";
+  const reason = state.itemReasons[key] || state.orderReason || "";
 
-  // Options only up to current max (MIN of package qty and remaining line balance)
   const options = Array.from({ length: max + 1 }, (_, i) => {
     return `<option value="${i}" ${i === selected ? "selected" : ""}>${i}</option>`;
   }).join("");
@@ -130,6 +251,7 @@ function renderAllocationRow(pkg, alloc) {
       <td>${money(line.unitPrice)}</td>
       <td>${money(line.unitPrice * selected)}</td>
     </tr>
+    ${renderShippingRow(pkg, alloc)}
   `;
 }
 
@@ -157,7 +279,7 @@ function renderPackage(pkg) {
             <th>In this package</th>
             <th>Select qty</th>
             <th>Reason</th>
-            <th>Price</th>
+            <th>Refund amount</th>
             <th>Subtotal</th>
           </tr>
         </thead>
@@ -169,9 +291,109 @@ function renderPackage(pkg) {
   `;
 }
 
+function renderOrderShipping() {
+  if (!orderShipping) return "";
+  const selected = state.orderShippingSelected;
+  const reason = state.orderShippingReason || state.orderReason || "";
+  const canSelect = orderShipping.availableToRefund > 0;
+  return `
+    <div class="card order-shipping-card">
+      <div class="order-ship-row">
+        <input
+          class="checkbox"
+          type="checkbox"
+          data-action="order-ship-toggle"
+          ${selected ? "checked" : ""}
+          ${canSelect ? "" : "disabled"}
+          aria-label="Refund order-level ${orderShipping.name}"
+        />
+        <div class="order-ship-body">
+          <div class="ship-name">${truckSvg} Order-level shipping fee</div>
+          <div class="item-name">${orderShipping.name}</div>
+          <div class="ship-amount">${money(orderShipping.availableToRefund)} remaining</div>
+          <p class="help" style="margin-top:4px">Applies to the whole order — independent of line-level Big &amp; Bulky.</p>
+        </div>
+        <select class="select order-ship-reason" data-action="order-ship-reason" ${selected ? "" : "disabled"}>
+          ${reasons
+            .map(
+              (r, i) =>
+                `<option value="${i === 0 ? "" : r}" ${reason === r ? "selected" : ""}>${r}</option>`
+            )
+            .join("")}
+        </select>
+        <div class="order-ship-amount">${selected ? money(orderShipping.availableToRefund) : money(0)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderTotals(summary) {
+  return `
+    <div class="totals-breakdown">
+      <div class="totals-row">
+        <span>Merchandise selected</span>
+        <span>${money(summary.merchandiseValue)}</span>
+      </div>
+      <div class="totals-row">
+        <span>Big &amp; Bulky shipping</span>
+        <span>${money(summary.lineShippingValue)}</span>
+      </div>
+      <div class="totals-row">
+        <span>Standard shipping</span>
+        <span>${money(summary.orderShippingValue)}</span>
+      </div>
+    </div>
+    <div class="total-box">
+      <span class="label">Total Refund Amount</span>
+      <span class="amount">${money(summary.value)}</span>
+    </div>
+  `;
+}
+
+function currentSummary() {
+  return summarize(
+    state.selections,
+    lines,
+    state.shippingSelections,
+    lineShipping,
+    orderShipping,
+    state.orderShippingSelected
+  );
+}
+
+/** Keep selected shipping amounts within shared line balance + package attributable. */
+function clampShippingSelections() {
+  let next = { ...state.shippingSelections };
+  let changed = false;
+  for (const ship of shipments) {
+    for (const pkg of ship.packages) {
+      for (const alloc of pkg.allocations) {
+        const charge = lineShipping[alloc.lineId];
+        if (!charge) continue;
+        const key = selectionKey(pkg.id, alloc.lineId);
+        const current = next[key];
+        if (!current) continue;
+        const max = maxShippingAmountSelectable({
+          charge,
+          qtyInPackage: alloc.qtyInPackage,
+          packageId: pkg.id,
+          shippingSelections: next,
+        });
+        if (current > max) {
+          if (max <= 0) delete next[key];
+          else next[key] = max;
+          changed = true;
+        }
+      }
+    }
+  }
+  if (changed) state.shippingSelections = next;
+}
+
 function render() {
+  clampShippingSelections();
   const root = document.getElementById("root");
-  const summary = summarize(state.selections, lines);
+  const summary = currentSummary();
   const notesError = state.notes.trim().length === 0;
 
   root.innerHTML = `
@@ -181,10 +403,10 @@ function render() {
           <h1>Refund request</h1>
           <p class="subtitle">Select items by package or shipment · line-level refund balance is authoritative</p>
         </div>
-        <div class="pill">${summary.count} selected · ${money(summary.value)}</div>
+        <div class="pill">${summary.merchandiseCount} items · ${money(summary.value)}</div>
       </div>
 
-      <p class="principle"><strong>Product line</strong> = how much can I refund? &nbsp;·&nbsp; <strong>Package / shipment</strong> = where did these physical units come from?</p>
+      <p class="principle"><strong>Product line</strong> = how much can I refund? &nbsp;·&nbsp; <strong>Package / shipment</strong> = where did these physical units come from? &nbsp;·&nbsp; <strong>Line shipping</strong> = separate from merchandise</p>
 
       <div class="card">
         <label class="field" for="order-reason">Order-level refund reason</label>
@@ -196,13 +418,13 @@ function render() {
             )
             .join("")}
         </select>
-        <p class="help" style="margin-top:6px">Applies to all selected items. You can override at the item level.</p>
+        <p class="help" style="margin-top:6px">Applies to all selected items and shipping. You can override at the item level.</p>
       </div>
 
       <div class="order-header">
         <div>
           <div class="title">
-            <svg width="18" height="14" viewBox="0 0 24 16" fill="none" aria-hidden="true"><path d="M1 4h14v9H1V4zm14 2h4l3 3v4h-7V6zM5 15.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm12 0a1.5 1.5 0 100-3 1.5 1.5 0 000 3z" stroke="currentColor" stroke-width="1.5"/></svg>
+            ${truckSvg}
             ${orderMeta.store}
           </div>
           <div class="meta">
@@ -243,6 +465,8 @@ function render() {
           .join("")}
       </div>
 
+      ${renderOrderShipping()}
+
       <div class="card">
         <label class="field" for="source">Source</label>
         <select id="source" class="select" data-action="source">
@@ -254,12 +478,9 @@ function render() {
         <label class="field" for="notes" style="margin-top:12px">Additional Notes *</label>
         <textarea id="notes" class="textarea ${notesError ? "error" : ""}" data-action="notes" placeholder="Enter reason for refund and any additional notes (required)">${state.notes}</textarea>
         ${notesError ? `<p class="error-text">Additional notes are required for refund processing.</p>` : ""}
-        <div class="total-box">
-          <span class="label">Total Refund Amount</span>
-          <span class="amount">${money(summary.value)}</span>
-        </div>
+        ${renderTotals(summary)}
         <div class="footer-actions">
-          <button class="btn btn-primary" data-action="submit" ${summary.count === 0 || notesError || !state.orderReason ? "disabled" : ""}>Process Refund</button>
+          <button class="btn btn-primary" data-action="submit" ${!summary.hasSelection || notesError || !state.orderReason ? "disabled" : ""}>Process Refund</button>
           <button class="btn btn-secondary" data-action="cancel">Cancel</button>
         </div>
         <div class="payload ${state.submitted ? "show" : ""}" id="payload">${state.submitted ? JSON.stringify(state.submitted, null, 2) : ""}</div>
@@ -270,7 +491,6 @@ function render() {
   applyIndeterminateChecks(root);
 }
 
-/** Indeterminate must be set via JS property — HTML can't express it. */
 function applyIndeterminateChecks(root) {
   root.querySelectorAll('[data-action="pkg-toggle"], [data-action="ship-toggle"]').forEach((input) => {
     const checkState = input.getAttribute("data-check-state");
@@ -288,8 +508,8 @@ function findPackage(packageId) {
 }
 
 function onClick(e) {
-  const t = e.target;
-  const action = t.getAttribute("data-action");
+  const t = e.target.closest("[data-action]") || e.target;
+  const action = t.getAttribute?.("data-action");
   if (!action) return;
 
   if (action === "item-toggle") {
@@ -305,7 +525,6 @@ function onClick(e) {
         packageId,
         selections: state.selections,
       });
-      // Default to package qty, capped only by remaining line balance
       state.selections = setSelection(
         state.selections,
         packageId,
@@ -327,11 +546,16 @@ function onClick(e) {
     render();
   }
 
+  if (action === "order-ship-toggle") {
+    state.orderShippingSelected = !!t.checked;
+    if (!t.checked) state.orderShippingReason = "";
+    render();
+  }
+
   if (action === "ship-toggle") {
     const ship = shipments.find((s) => s.id === t.getAttribute("data-ship"));
     if (!ship) return;
     const current = shipmentCheckState(state.selections, ship, lines);
-    // Partial or none → fill to max refundable; fully selected → clear
     if (current === "all") state.selections = clearShipment(state.selections, ship);
     else state.selections = selectShipment(state.selections, ship, lines);
     render();
@@ -347,30 +571,67 @@ function onClick(e) {
   }
 
   if (action === "submit") {
-    const summary = summarize(state.selections, lines);
+    const summary = currentSummary();
     state.submitted = {
       source: state.source,
       orderReason: state.orderReason,
       notes: state.notes,
+      merchandiseTotal: summary.merchandiseValue,
+      lineShippingTotal: summary.lineShippingValue,
+      orderShippingTotal: summary.orderShippingValue,
       total: summary.value,
       items: Object.entries(state.selections).map(([key, qty]) => {
         const [packageId, lineId] = key.split("::");
         return {
+          type: "merchandise",
           lineId,
           refundQuantity: qty,
           packageContext: packageId,
           reason: state.itemReasons[key] || state.orderReason,
           unitPrice: lines[lineId].unitPrice,
+          amount: qty * lines[lineId].unitPrice,
         };
       }),
-      note: "Package context is stored for this transaction only; it is not evidence of prior refund attribution.",
+      lineShipping: Object.entries(state.shippingSelections).map(([key, amount]) => {
+        const [packageId, lineId] = key.split("::");
+        const charge = lineShipping[lineId];
+        const pkg = findPackage(packageId);
+        const alloc = pkg?.allocations.find((a) => a.lineId === lineId);
+        const attributable = alloc
+          ? packageAttributableShipping(charge, alloc.qtyInPackage)
+          : amount;
+        return {
+          type: "line_shipping",
+          chargeId: charge.id,
+          lineId,
+          name: charge.name,
+          packageAttributable: attributable,
+          refundAmount: amount,
+          packageContext: packageId,
+          reason: state.shippingReasons[key] || state.orderReason,
+          note: "Package context is for this transaction only; prior shipping refunds are not package-attributed. Partial refunds do not change the original package-attributable charge.",
+        };
+      }),
+      orderShipping: state.orderShippingSelected
+        ? {
+            type: "order_shipping",
+            chargeId: orderShipping.id,
+            name: orderShipping.name,
+            refundAmount: orderShipping.availableToRefund,
+            reason: state.orderShippingReason || state.orderReason,
+          }
+        : null,
     };
     render();
   }
 
   if (action === "cancel") {
     state.selections = {};
+    state.shippingSelections = {};
     state.itemReasons = {};
+    state.shippingReasons = {};
+    state.orderShippingSelected = false;
+    state.orderShippingReason = "";
     state.submitted = null;
     state.notes = "";
     render();
@@ -390,7 +651,6 @@ function onChange(e) {
     }
     if (t.id === "notes") {
       state.notes = t.value;
-      // soft re-render only error state — full render ok
       render();
       const notes = document.getElementById("notes");
       if (notes) {
@@ -399,6 +659,40 @@ function onChange(e) {
       }
     }
     return;
+  }
+
+  if (action === "ship-fee-toggle") {
+    const packageId = t.getAttribute("data-pkg");
+    const lineId = t.getAttribute("data-line");
+    const charge = lineShipping[lineId];
+    const pkg = findPackage(packageId);
+    const alloc = pkg?.allocations.find((a) => a.lineId === lineId);
+    if (!charge || !pkg || !alloc) return;
+    if (t.checked) {
+      const max = maxShippingAmountSelectable({
+        charge,
+        qtyInPackage: alloc.qtyInPackage,
+        packageId,
+        shippingSelections: state.shippingSelections,
+      });
+      state.shippingSelections = setShippingSelection(
+        state.shippingSelections,
+        packageId,
+        charge,
+        alloc.qtyInPackage,
+        max
+      );
+    } else {
+      state.shippingSelections = setShippingSelection(
+        state.shippingSelections,
+        packageId,
+        charge,
+        alloc.qtyInPackage,
+        0
+      );
+      delete state.shippingReasons[selectionKey(packageId, lineId)];
+    }
+    render();
   }
 
   if (action === "qty") {
@@ -417,10 +711,49 @@ function onChange(e) {
     render();
   }
 
+  if (action === "ship-amount") {
+    const packageId = t.getAttribute("data-pkg");
+    const lineId = t.getAttribute("data-line");
+    const charge = lineShipping[lineId];
+    const pkg = findPackage(packageId);
+    const alloc = pkg?.allocations.find((a) => a.lineId === lineId);
+    if (!charge || !pkg || !alloc) return;
+    const nextAmount = Number(t.value);
+    if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+      // Keep checkbox intent: clamp to minimum step rather than clearing mid-edit
+      return;
+    }
+    state.shippingSelections = setShippingSelection(
+      state.shippingSelections,
+      packageId,
+      charge,
+      alloc.qtyInPackage,
+      nextAmount
+    );
+    render();
+    const input = document.querySelector(
+      `input[data-action="ship-amount"][data-pkg="${packageId}"][data-line="${lineId}"]`
+    );
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+
   if (action === "reason") {
     const key = selectionKey(t.getAttribute("data-pkg"), t.getAttribute("data-line"));
     if (t.value) state.itemReasons[key] = t.value;
     else delete state.itemReasons[key];
+  }
+
+  if (action === "ship-reason") {
+    const key = selectionKey(t.getAttribute("data-pkg"), t.getAttribute("data-line"));
+    if (t.value) state.shippingReasons[key] = t.value;
+    else delete state.shippingReasons[key];
+  }
+
+  if (action === "order-ship-reason") {
+    state.orderShippingReason = t.value;
   }
 
   if (action === "order-reason") {

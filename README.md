@@ -1,18 +1,17 @@
 # Refund package / shipment flow (local prototype)
 
-Interactive local prototype of the Team member Order Management **refund items** experience, using the Team member guide app Figma as the design system.
+Interactive local prototype of the Team member Order Management **refund items** experience.
 
 ## Design principle
 
 > **Line ID owns the refund balance. Package / shipment owns the fulfilment context.**
 
-- Package quantities = physical fulfilment only  
-- Refunded / available to refund = line-level backend values only  
-- Never attribute historical refunds to a package  
+- Package quantities = physical fulfilment only
+- Merchandise & line-level shipping balances = line-level backend values only
+- Never attribute historical refunds to a package
+- Bulk select package/shipment = merchandise only (shipping is explicit)
 
 ## Run locally
-
-From this folder:
 
 ```bash
 python3 -m http.server 5173
@@ -20,43 +19,37 @@ python3 -m http.server 5173
 
 Open [http://localhost:5173](http://localhost:5173).
 
-(ES modules require a local server — opening `index.html` as a file will not work.)
+## Demo scenario — line-level Big & Bulky
 
-## Demo scenario (PRD §17)
-
-**UNO Card Game — Line 123**
+**14ft Trampoline — Line 123**
 
 | | |
 |---|---|
-| Ordered | 5 |
-| Delivered | 5 |
-| Refunded | 1 |
-| Available to refund | 4 |
+| Quantity | 3 |
+| Product | $260 each |
+| Big & Bulky | $45 original · $15/unit |
+| Previously refunded shipping | $15 |
+| Remaining shipping | $30 |
 
-| Shipment | Package | Tracking | UNO in package |
-|---|---|---|---|
-| Sydney DC | Package 1 | AU123456 | 1 (+ Crayola ×2) |
-| Sydney DC | Package 2 | AU123456 | 2 |
-| Melbourne DC | Package 3 | AU987654 | 2 |
+| Package | Qty | Attributable shipping |
+|---|---|---|
+| Package 1 | 1 (+ Crayola ×2) | $15 |
+| Package 2 | 2 | $30 |
 
-Try: select Package 1 only (damaged package) → submits Line 123 ×1 with package context `pkg-1`.
+Also includes independent **order-level Standard shipping** ($12 remaining).
 
-Also try exhausting the line balance across packages — remaining package rows stay visible with *No quantity remaining to refund for this product line.* Line ordered / refunded / available values appear on each package row (same line totals everywhere that product appears).
+### Try
 
-## Acceptance criteria covered
+1. Refund Package 2 trampoline ×1 ($260) without shipping — shipping stays unchecked.
+2. Tick Package 1 Big & Bulky ($15) → Package 2 shipping becomes *Only $15.00 remaining to refund*.
+3. Tick Package 2 shipping → selects $15 (not $30); Package 1 shipping exhausts if Package 2 took the rest first.
+4. Package/shipment “select all” fills merchandise only — not Big & Bulky.
+5. Totals split merchandise / Big & Bulky / Standard shipping.
 
-| AC | Behaviour in prototype |
-|---|---|
-| AC1 | Same line appears in each package allocation |
-| AC2 | Line strip shows Ordered / Delivered / Refunded / Available to refund |
-| AC3 | No package-level “refunded” attribution |
-| AC4 | Select qty capped by qty in package |
-| AC5 | Shared line balance across packages |
-| AC6 | Package 1 & 2 share tracking AU123456 but remain separate |
-| AC7 | Package checkbox selects max eligible under line balances |
-| AC8 | Exhausted line still listed; select disabled with explanatory copy |
-| AC9 | “Qty in package” column distinct from “Available to refund” |
+## Live preview (this branch)
+
+After Pages builds from the PR branch, or merge to main: https://mconway4.github.io/refund-package-flow/
 
 ## Stack
 
-Static HTML + CSS + ES modules. No build step. Styling aligned to the Team member refund screens (teal accents, card layout, Inter).
+Static HTML + CSS + ES modules. No build step.
