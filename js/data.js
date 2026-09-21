@@ -103,7 +103,7 @@ export const shipments = [
     status: "Delivered",
     packages: [
       {
-        id: "pkg-1",
+        id: "pkg-syd-1",
         label: "Package 1",
         tracking: "AU123456",
         status: "Delivered",
@@ -113,7 +113,7 @@ export const shipments = [
         ],
       },
       {
-        id: "pkg-2",
+        id: "pkg-syd-2",
         label: "Package 2",
         tracking: "AU123456",
         status: "Delivered",
@@ -127,15 +127,15 @@ export const shipments = [
     status: "Delivered",
     packages: [
       {
-        id: "pkg-3",
-        label: "Package 3",
+        id: "pkg-mel-1",
+        label: "Package 1",
         tracking: "AU987654",
         status: "Delivered",
         allocations: [{ lineId: "123", qtyInPackage: 1 }],
       },
       {
-        id: "pkg-4",
-        label: "Package 4",
+        id: "pkg-mel-2",
+        label: "Package 2",
         tracking: "AU987654",
         status: "Delivered",
         allocations: [{ lineId: "789", qtyInPackage: 2 }],
@@ -148,15 +148,15 @@ export const shipments = [
     status: "Delivered",
     packages: [
       {
-        id: "pkg-5",
-        label: "Package 5",
+        id: "pkg-bur-1",
+        label: "Package 1",
         tracking: "AU555001",
         status: "Delivered",
         allocations: [{ lineId: "123", qtyInPackage: 1 }],
       },
       {
-        id: "pkg-6",
-        label: "Package 6",
+        id: "pkg-bur-2",
+        label: "Package 2",
         tracking: "AU555002",
         status: "Delivered",
         allocations: [{ lineId: "789", qtyInPackage: 2 }],
