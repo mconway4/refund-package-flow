@@ -1,4 +1,4 @@
-import { orderMeta, reasons, lines, shipments } from "./data.js?v=11";
+import { orderMeta, reasons, lines, shipments } from "./data.js?v=12";
 import {
   selectionKey,
   maxSelectable,
@@ -10,7 +10,7 @@ import {
   clearShipment,
   shipmentCheckState,
   summarize,
-} from "./selection.js?v=11";
+} from "./selection.js?v=12";
 
 const state = {
   selections: {},
@@ -103,7 +103,7 @@ function renderAllocationRow(pkg, alloc) {
           <div class="thumb">${line.name.slice(0, 2).toUpperCase()}</div>
           <div>
             <div class="item-name">${line.name}</div>
-            <div class="item-sku">SKU ${line.sku} · Line ${line.id}</div>
+            <div class="item-sku">SKU ${line.sku}</div>
             ${priorRefund}
           </div>
         </div>
